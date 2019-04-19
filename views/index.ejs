@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Home</title>
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.7.2/css/bulma.min.css">
+  <script defer src="https://use.fontawesome.com/releases/v5.3.1/js/all.js"></script>
+  <style>
+    #cards-list {}
+
+    .card-item {}
+
+    input {
+      margin: 3px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <main class="section">
+    
+    <div class="content">
+      <h1 class="is-size-3">Expenses Tracker</h1>
+    </div>
+  
+    <div>
+      <button class="button is-success" id="add-card" onclick="handler.open()">Add new card</button>
+    </div>
+  
+    <div>
+      <ul id="cards-list"></ul>
+    </div>
+    
+  </main>
+
+  <div class="modal">
+    <div class="modal-background"></div>
+    <div class="modal-card">
+      <header class="modal-card-head">
+        <p class="modal-card-title"></p>
+        <button class="delete" aria-label="close" onclick="closeModal()"></button>
+      </header>
+      <section class="modal-card-body">
+        <div class="content">
+          <form id="modal-cards-selection-form"></form>
+        </div>
+      </section>
+      <footer class="modal-card-foot">
+        <button class="button is-success" onclick="gatherSelectionsAndAddToDashboard()">Add card(s)</button>
+        <button class="button" onclick="closeModal()">Cancel</button>
+      </footer>
+    </div>
+  </div>
+  
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+
+  <script>
+    // console.log("plaid public key: " + "<%= PLAID_PUBLIC_KEY %>");
+    // console.log("plaid env: " + "<%= PLAID_ENV %>");
+    // console.log("plaid products: " + "<%= PLAID_PRODUCTS %>");
+
+    /* Constructor Declarations */
+    function Counter(/*number*/ startAt = 0) {
+      if (typeof startAt != "number")
+        return new TypeError("argument must be a number");
+      
+      if (startAt < 0)
+        return new Error("count start value must be 0 or greater");
+      
+      /*private members*/
+      const initialValue = startAt;
+      var _count = initialValue;
+
+      /*public members*/
+      this.count = initialValue;
+
+      /*public methods*/
+      this.getCount = () => _count
+      this.add = function() { 
+        _count++;
+        this.count = _count;
+        return 1;
+      }
+      this.remove = function() {
+        if (_count == 0)
+          return 0;
+
+        _count--;
+        this.count = _count;
+        return 1;
+      }
+    }
+
+    function List() {
+      _items = [];
+
+      this.add = i => _items.push(i)
+      this.remove = () => _items.pop()
+      this.count = () => _items.length
+      this.getItems = () => _items
+    }
+
+    function Card (
+      /*string*/ type,
+      /*string*/ name,
+      /*string*/ accountId,
+      /*string*/ financialInstitution = null
+      // /*string*/ institutionId = null
+    ) {
+      if (typeof type != "string")
+        return new TypeError("argument must be a string");
+      
+      if (type == null || type == undefined || type.trim() == "")
+        return new Error("argument cannot be null, undefined or empty");
+      
+      const allowedCardTypes = ["checking", "credit card"];
+      if ( !allowedCardTypes.includes(type.toLowerCase()) )
+          return new Error(`only the following card types are allowed: ${allowedCardTypes}`);
+
+      var _type = type
+      var _accountId = accountId;
+      var _financialInstitution = financialInstitution;
+      // var _institutionId = institutionId;
+
+      this.type = type; // getType() is the reliable way to check card type
+      this.name = name;
+
+      this.getType = () => _type
+      this.getAccountId = () => _accountId
+      this.getFinancialInstitution = () => _financialInstitution
+      // this.getInstitutionId = () => _institutionId
+
+      this.getCardSignature = () => `${_type} | ${this.name} | ${_financialInstitution}`
+    }
+
+    /* Main Logic */
+    const modal = document.querySelector(".modal");
+    var cardsList = new List();
+    var cardsCounter = new Counter();
+
+     var products = '<%= PLAID_PRODUCTS %>'.split(',');
+     var handler = Plaid.create({
+      apiVersion: 'v2',
+      clientName: 'Plaid Quickstart',
+      env: '<%= PLAID_ENV %>',
+      product: products,
+      key: '<%= PLAID_PUBLIC_KEY %>',
+      onSuccess: getUserAccountsAndPromptUserForAccountSelections
+    });
+
+     async function getUserAccountsAndPromptUserForAccountSelections(public_token) {
+        await generateAccessToken(public_token);
+
+        var institutionResponse = await gatherInstitutionInformation();
+        var accountsResponse = await getCheckingAndCreditUserAccounts(); // checking and credit card subtypes
+
+        populateModal(institutionResponse.data.institution, accountsResponse.data.accounts);
+        openModal();
+     }
+
+     function generateAccessToken(public_token) {
+       return axios.post("/get_access_token", { public_token });
+     }
+
+     function gatherInstitutionInformation() {
+       return axios.get("/item");
+     }
+     
+     function getCheckingAndCreditUserAccounts() {
+       return axios.get("/accounts");
+     }
+
+     function populateModal(institution, accounts) {
+        setModalTitle(institution);
+        setModalContent(accounts, institution); // see if you can made this a one argument function again
+     }
+
+     function setModalTitle(institution) {
+        const modalTitle = document.querySelector(".modal-card-title");
+        modalTitle.innerHTML = `Available <i>${institution.name}</i> cards`;
+     }
+
+     function setModalContent(accounts, ins) {
+        var cardFormElements = accounts.map(acct => createCardFormElement(acct, ins));
+        appendToFormBody(cardFormElements);
+     }
+
+     function createCardFormElement(account, institution) {
+        var field = document.createElement("div");
+        field.setAttribute("class", "field modal-card-option");
+        field.setAttribute("id", account.account_id);
+        field.setAttribute("name", account.name);
+        field.setAttribute("subtype", account.subtype);
+        field.setAttribute("ins-name", institution.name);
+        field.setAttribute("ins-id", institution.institution_id);
+
+        var label = document.createElement("label");
+        label.setAttribute("class", "checkbox");
+        label.appendChild( document.createTextNode(`${account.subtype} | ${account.name}`) );
+
+        var input = document.createElement("input");
+        input.setAttribute("type", "checkbox");
+
+        label.prepend(input);
+        field.append(label);
+
+        return field;
+     }
+
+     function appendToFormBody(elements, formId) {
+       // consider making these properties of a global Modal object
+       const modalBody = document.getElementById("modal-cards-selection-form");
+        elements.forEach(element => {
+          modalBody.append(element);
+        });
+     }
+
+     function openModal() {
+      if (!modal.classList.contains("is-active"))
+        modal.classList.add("is-active");
+     }
+
+     function closeModal() {
+      if (modal.classList.contains("is-active"))
+        modal.classList.remove("is-active");
+        resetModal();
+     }
+
+     function resetModal() {
+       document.querySelector(".modal-card-title").innerHTML = "";
+       document.getElementById("modal-cards-selection-form").innerHTML = "";
+     }
+
+     function gatherSelectionsAndAddToDashboard() {
+        var cardSelections = collectCheckedCards();
+        closeModal();
+        cardSelections.forEach(card =>
+          addNewCard( // try to leverage the Card class here
+            card.getAttribute("subtype"),
+            card.getAttribute("name"),
+            card.id,
+            card.getAttribute("ins-name"),
+            card.getAttribute("ins-id")
+          )
+        )
+     }
+
+     function collectCheckedCards() {
+       var cardOptions = Array.from(document.getElementById("modal-cards-selection-form").elements);
+       var checkedCards = cardOptions.filter(card => card.checked);
+
+       if (checkedCards.length == 0)
+        return
+
+        var selections = checkedCards.map(card => card.parentElement.parentElement);
+        return selections;
+     }
+
+     // there can be more anstraction
+     function addNewCard(type, name, accountId, institution, institutionId) { 
+      var DOMcardsList = document.getElementById("cards-list");
+
+      var newCard = new Card(type, name, accountId, institution, institutionId);
+      cardsList.add(newCard); // adds Card to global list of cards.
+      cardsCounter.add();
+
+      var newCardItem = document.createElement("li");
+
+      newCardItem.setAttribute("id", accountId);
+      newCardItem.setAttribute("class", "card-item");
+      newCardItem.innerText = newCard.getCardSignature();
+
+      DOMcardsList.appendChild(newCardItem);
+     }
+  </script>
+  
+</body>
+</html>
